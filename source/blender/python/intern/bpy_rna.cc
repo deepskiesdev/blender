@@ -60,6 +60,7 @@
 #include "BKE_global.hh" /* evil G.* */
 #include "BKE_idprop.hh"
 #include "BKE_idtype.hh"
+#include "BKE_layer.hh"
 #include "BKE_main.hh"
 #include "BKE_report.hh"
 
@@ -67,6 +68,8 @@
 #include "BKE_node.hh"
 
 #include "DEG_depsgraph_query.hh"
+
+#include "DNA_layer_types.h"
 
 #include "../generic/idprop_py_api.hh" /* For IDprop lookups. */
 #include "../generic/idprop_py_ui_api.hh"
@@ -4089,6 +4092,36 @@ static PyObject *pyrna_struct_path_resolve_static(BPy_StructRNA *self, PyObject 
   return pyrna_struct_path_resolve_impl(self, args, true);
 }
 
+/* The caller prepares the graph and the layer's base lookup before entering
+ * its read-only comparison. Do not synchronize or allocate a hash here. */
+static PyObject *pyrna_struct_object_hidden_in_synced_layer(BPy_StructRNA *self, PyObject *other)
+{
+  PYRNA_STRUCT_CHECK_OBJ(self);
+  if (self->ptr->type != RNA_Object || !self->ptr->data || !BPy_StructRNA_Check(other)) {
+    PyErr_SetString(PyExc_TypeError, "Expected an Object and a ViewLayer");
+    return nullptr;
+  }
+  BPy_StructRNA *layer_rna = reinterpret_cast<BPy_StructRNA *>(other);
+  PYRNA_STRUCT_CHECK_OBJ(layer_rna);
+  if (layer_rna->ptr->type != RNA_ViewLayer || !layer_rna->ptr->data) {
+    PyErr_SetString(PyExc_TypeError, "Expected a ViewLayer");
+    return nullptr;
+  }
+
+  ViewLayer *layer = static_cast<ViewLayer *>(layer_rna->ptr->data);
+  if ((layer->flag & VIEW_LAYER_OUT_OF_SYNC) || !layer->object_bases_hash) {
+    PyErr_SetString(PyExc_ValueError, "ViewLayer object bases are not prepared");
+    return nullptr;
+  }
+  Object *object = static_cast<Object *>(self->ptr->data);
+  const Base *base = BKE_view_layer_base_find(layer, object);
+  if (base == nullptr) {
+    PyErr_SetString(PyExc_ValueError, "Object is absent from ViewLayer");
+    return nullptr;
+  }
+  return PyBool_FromLong((base->flag & BASE_HIDDEN) != 0);
+}
+
 PyDoc_STRVAR(
     /* Wrap. */
     pyrna_struct_path_from_module_doc,
@@ -6519,6 +6552,10 @@ static PyMethodDef pyrna_struct_methods[] = {
     {"_path_element_type_static",
      reinterpret_cast<PyCFunction>(pyrna_struct_path_element_type_static),
      METH_VARARGS,
+     nullptr},
+    {"_object_hidden_in_synced_layer",
+     reinterpret_cast<PyCFunction>(pyrna_struct_object_hidden_in_synced_layer),
+     METH_O,
      nullptr},
     {"path_from_id",
      reinterpret_cast<PyCFunction>(pyrna_struct_path_from_id),
