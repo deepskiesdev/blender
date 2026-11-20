@@ -980,8 +980,8 @@ PyObject *pyrna_py_from_array(PointerRNA *ptr, PropertyRNA *prop)
 
   ret = pyrna_math_object_from_array(ptr, prop);
 
-  /* Is this a math object? */
-  if (ret) {
+  /* Fall back only when the array cannot be represented as a math object. */
+  if (ret != nullptr || PyErr_Occurred()) {
     return ret;
   }
 
