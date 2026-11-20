@@ -834,6 +834,9 @@ PyObject *pyrna_math_object_from_array(PointerRNA *ptr, PropertyRNA *prop)
     if (!is_thick) {
       /* Owned by the mathutils PyObject. */
       ret = pyrna_prop_CreatePyObject(ptr, prop);
+      if (ret == nullptr) {
+        return nullptr;
+      }
     }
 
     switch (subtype) {
@@ -935,7 +938,7 @@ PyObject *pyrna_math_object_from_array(PointerRNA *ptr, PropertyRNA *prop)
     }
   }
 
-  if (ret == nullptr) {
+  if (ret == nullptr && !PyErr_Occurred()) {
     if (is_thick) {
     /* This is an array we can't reference (since it is not thin wrappable)
      * and cannot be coerced into a mathutils type, so return as a list. */
@@ -8100,14 +8103,20 @@ static PyObject *pyrna_prop_collection_iter_CreatePyObject(PointerRNA *ptr, Prop
   BPy_PropertyPointerRNA_Reference prop_ptr{ptr, prop};
   PyObject *pypropptr_rna = PyCapsule_New(
       &prop_ptr, BPy_PropertyPointerRNA_capsule_identifier, nullptr);
+  if (pypropptr_rna == nullptr) {
+    return nullptr;
+  }
 
   PyObject *self = PyObject_CallOneArg(
       reinterpret_cast<PyObject *>(&pyrna_prop_collection_iter_Type), pypropptr_rna);
+  Py_DECREF(pypropptr_rna);
+  if (self == nullptr) {
+    return nullptr;
+  }
   BPy_PropertyCollectionIterRNA *self_property = reinterpret_cast<BPy_PropertyCollectionIterRNA *>(
       self);
 
   BLI_assert(self_property->iter.has_value());
-  Py_DECREF(pypropptr_rna);
 
 #  ifdef USE_WEAKREFS
   self_property->in_weakreflist = nullptr;
@@ -8558,6 +8567,9 @@ static PyObject *pyrna_struct_CreatePyObject_from_type(const PointerRNA *ptr,
   /* Pass the PointerRNA to `__new__`/`__init__` functions as an opaque PyCapsule object. */
   PyObject *pyptr_rna = PyCapsule_New(
       const_cast<PointerRNA *>(ptr), BPy_capsule_PointerRNA_identifier, nullptr);
+  if (pyptr_rna == nullptr) {
+    return nullptr;
+  }
 
   BPy_StructRNA *pyrna = nullptr;
   if (tp) {
@@ -8570,6 +8582,7 @@ static PyObject *pyrna_struct_CreatePyObject_from_type(const PointerRNA *ptr,
     pyrna = reinterpret_cast<BPy_StructRNA *>(
         PyObject_CallOneArg(reinterpret_cast<PyObject *>(&pyrna_struct_Type), pyptr_rna));
   }
+  Py_DECREF(pyptr_rna);
 
 #ifdef USE_PYRNA_STRUCT_REFERENCE
   /* #PyType_GenericAlloc will have set tracking.
@@ -8593,7 +8606,6 @@ static PyObject *pyrna_struct_CreatePyObject_from_type(const PointerRNA *ptr,
   }
 
   BLI_assert(pyrna->ptr.has_value());
-  Py_DECREF(pyptr_rna);
 
   /* Blender's instance owns a reference (to avoid Python freeing it). */
   if (instance) {
@@ -8700,17 +8712,22 @@ PyObject *pyrna_prop_CreatePyObject(PointerRNA *ptr, PropertyRNA *prop)
   BPy_PropertyPointerRNA_Reference prop_ptr{ptr, prop};
   PyObject *pypropptr_rna = PyCapsule_New(
       &prop_ptr, BPy_PropertyPointerRNA_capsule_identifier, nullptr);
+  if (pypropptr_rna == nullptr) {
+    return nullptr;
+  }
 
   BPy_PropertyRNA *pyrna = reinterpret_cast<BPy_PropertyRNA *>(
       PyObject_CallOneArg(reinterpret_cast<PyObject *>(type), pypropptr_rna));
+  Py_DECREF(pypropptr_rna);
 
   if (pyrna == nullptr) {
-    PyErr_SetString(PyExc_MemoryError, "couldn't create BPy_rna object");
+    if (!PyErr_Occurred()) {
+      PyErr_SetString(PyExc_MemoryError, "couldn't create BPy_rna object");
+    }
     return nullptr;
   }
 
   BLI_assert(pyrna->ptr.has_value());
-  Py_DECREF(pypropptr_rna);
 
 #ifdef USE_WEAKREFS
   pyrna->in_weakreflist = nullptr;
