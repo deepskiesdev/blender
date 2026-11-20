@@ -141,6 +141,16 @@ bool RNA_path_resolve_full_maybe_null(const PointerRNA *ptr,
                                       PropertyRNA **r_prop,
                                       int *r_index);
 
+/**
+ * Resolve using the selected native properties only. Check each property
+ * before following it, including the terminal property.
+ */
+bool RNA_path_resolve_static(const PointerRNA *ptr,
+                             const char *path,
+                             PointerRNA *r_ptr,
+                             PropertyRNA **r_prop,
+                             int *r_index);
+
 /* RNA_path_resolve_property() variants ensure that pointer + property both exist. */
 
 /**
