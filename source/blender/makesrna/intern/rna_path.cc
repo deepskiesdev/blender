@@ -370,6 +370,8 @@ static bool rna_path_parse_array_index(const char **path,
  *                      Collection property, \a r_ptr will be set to the value of that property,
  *                      and \a r_prop will be null.
  *                      Mutually exclusive with \a r_item_ptr.
+ * \param static_properties: Refuse runtime properties before reading or
+ *                           traversing them.
  *
  * \return \a true on success, \a false if the path is somehow invalid.
  */
@@ -380,7 +382,8 @@ static bool rna_path_parse(const PointerRNA *ptr,
                            int *r_index,
                            PointerRNA *r_item_ptr,
                            ListBase *r_elements,
-                           const bool eval_pointer)
+                           const bool eval_pointer,
+                           const bool static_properties = false)
 {
   BLI_assert(r_item_ptr == nullptr || !eval_pointer);
   PropertyRNA *prop;
@@ -442,6 +445,12 @@ static bool rna_path_parse(const PointerRNA *ptr,
       return false;
     }
 
+    if (static_properties && !use_id_prop &&
+        (RNA_property_is_runtime(prop)))
+    {
+      return false;
+    }
+
     if (r_elements) {
       prop_elem = MEM_new<PropertyElemRNA>(__func__);
       prop_elem->ptr = curptr;
@@ -451,6 +460,9 @@ static bool rna_path_parse(const PointerRNA *ptr,
     }
 
     type = RNA_property_type(prop);
+    if (static_properties && use_id_prop && (*path || ELEM(type, PROP_POINTER, PROP_COLLECTION))) {
+      return false;
+    }
 
     /* now look up the value of this property if it is a pointer or
      * collection, otherwise return the property rna so that the
@@ -555,6 +567,12 @@ bool RNA_path_resolve_full_maybe_null(
     const PointerRNA *ptr, const char *path, PointerRNA *r_ptr, PropertyRNA **r_prop, int *r_index)
 {
   return rna_path_parse(ptr, path, r_ptr, r_prop, r_index, nullptr, nullptr, true);
+}
+
+bool RNA_path_resolve_static(
+    const PointerRNA *ptr, const char *path, PointerRNA *r_ptr, PropertyRNA **r_prop, int *r_index)
+{
+  return rna_path_parse(ptr, path, r_ptr, r_prop, r_index, nullptr, nullptr, true, true);
 }
 
 bool RNA_path_resolve_property(const PointerRNA *ptr,

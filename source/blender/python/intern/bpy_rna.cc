@@ -3914,7 +3914,9 @@ PyDoc_STRVAR(
     "   :type coerce: bool\n"
     "   :return: Property value or property object.\n"
     "   :rtype: Any | :class:`bpy.types.bpy_prop`\n");
-static PyObject *pyrna_struct_path_resolve(BPy_StructRNA *self, PyObject *args)
+static PyObject *pyrna_struct_path_resolve_impl(BPy_StructRNA *self,
+                                               PyObject *args,
+                                               const bool static_properties)
 {
   const char *path;
   PyObject *coerce = Py_True;
@@ -3928,7 +3930,11 @@ static PyObject *pyrna_struct_path_resolve(BPy_StructRNA *self, PyObject *args)
     return nullptr;
   }
 
-  if (RNA_path_resolve_full_maybe_null(&self->ptr.value(), path, &r_ptr, &r_prop, &index)) {
+  const bool resolved = static_properties ?
+                            RNA_path_resolve_static(&self->ptr.value(), path, &r_ptr, &r_prop, &index) :
+                            RNA_path_resolve_full_maybe_null(
+                                &self->ptr.value(), path, &r_ptr, &r_prop, &index);
+  if (resolved) {
     if (r_prop) {
       if (index != -1) {
         if (index >= RNA_property_array_length(&r_ptr, r_prop) || index < 0) {
@@ -3957,6 +3963,38 @@ static PyObject *pyrna_struct_path_resolve(BPy_StructRNA *self, PyObject *args)
                RNA_struct_identifier(self->ptr->type),
                path);
   return nullptr;
+}
+
+/* The native caller checks the actual element type before reading a bulk
+ * collection property. Avoid the RNA-reflection attribute on the result. */
+static PyObject *pyrna_struct_path_element_type_static(BPy_StructRNA *self, PyObject *args)
+{
+  const char *path;
+  PointerRNA resolved;
+  PropertyRNA *property = nullptr;
+  int index = -1;
+
+  PYRNA_STRUCT_CHECK_OBJ(self);
+  if (!PyArg_ParseTuple(args, "s:_path_element_type_static", &path)) {
+    return nullptr;
+  }
+  if (!RNA_path_resolve_static(&self->ptr.value(), path, &resolved, &property, &index) ||
+      !resolved.data || property != nullptr)
+  {
+    PyErr_SetString(PyExc_ValueError, "Path does not select a static RNA object");
+    return nullptr;
+  }
+  return PyUnicode_FromString(RNA_struct_identifier(resolved.type));
+}
+
+static PyObject *pyrna_struct_path_resolve(BPy_StructRNA *self, PyObject *args)
+{
+  return pyrna_struct_path_resolve_impl(self, args, false);
+}
+
+static PyObject *pyrna_struct_path_resolve_static(BPy_StructRNA *self, PyObject *args)
+{
+  return pyrna_struct_path_resolve_impl(self, args, true);
 }
 
 PyDoc_STRVAR(
@@ -6223,6 +6261,11 @@ static PyMethodDef pyrna_struct_methods[] = {
      (PyCFunction)pyrna_struct_path_resolve,
      METH_VARARGS,
      pyrna_struct_path_resolve_doc},
+    {"_path_resolve_static", (PyCFunction)pyrna_struct_path_resolve_static, METH_VARARGS, nullptr},
+    {"_path_element_type_static",
+     (PyCFunction)pyrna_struct_path_element_type_static,
+     METH_VARARGS,
+     nullptr},
     {"path_from_id",
      (PyCFunction)pyrna_struct_path_from_id,
      METH_VARARGS,
