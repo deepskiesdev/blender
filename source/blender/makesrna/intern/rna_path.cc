@@ -21,9 +21,11 @@
 
 #include "BKE_idprop.hh"
 #include "BKE_idtype.hh"
+#include "BKE_layer.hh"
 #include "BKE_lib_id.hh"
 
 #include "DNA_ID.h" /* For ID properties. */
+#include "DNA_layer_types.h"
 
 #include "MEM_guardedalloc.h"
 
@@ -351,6 +353,25 @@ static bool rna_path_parse_array_index(const char **path,
   return true;
 }
 
+static bool rna_path_static_layer_ready(const PointerRNA &ptr)
+{
+  const ViewLayer *layer;
+  if (ELEM(ptr.type, &RNA_ViewLayer, &RNA_LayerObjects)) {
+    layer = static_cast<const ViewLayer *>(ptr.data);
+  }
+  else if (ptr.type == &RNA_LayerCollection) {
+    if (!ptr.owner_id || GS(ptr.owner_id->name) != ID_SCE) {
+      return false;
+    }
+    layer = BKE_view_layer_find_from_collection(
+        reinterpret_cast<const Scene *>(ptr.owner_id), static_cast<LayerCollection *>(ptr.data));
+  }
+  else {
+    return true;
+  }
+  return layer && !(layer->flag & VIEW_LAYER_OUT_OF_SYNC);
+}
+
 /**
  * Generic rna path parser.
  *
@@ -370,8 +391,8 @@ static bool rna_path_parse_array_index(const char **path,
  *                      Collection property, \a r_ptr will be set to the value of that property,
  *                      and \a r_prop will be null.
  *                      Mutually exclusive with \a r_item_ptr.
- * \param static_properties: Refuse runtime properties before reading or
- *                           traversing them.
+ * \param static_properties: Refuse runtime properties and unprepared layer data
+ *                           before reading or traversing them.
  *
  * \return \a true on success, \a false if the path is somehow invalid.
  */
@@ -413,7 +434,8 @@ static bool rna_path_parse(const PointerRNA *ptr,
     const bool use_id_prop = (*path == '[');
     /* Custom property lookup: e.g. `C.object["someprop"]`. */
 
-    if (!curptr.data) {
+    /* Layer collection traversal can synchronize and replace native data. */
+    if (!curptr.data || (static_properties && !rna_path_static_layer_ready(curptr))) {
       return false;
     }
 
