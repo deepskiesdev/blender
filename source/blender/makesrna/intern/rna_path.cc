@@ -625,6 +625,48 @@ bool RNA_path_resolve_static(
   return rna_path_parse(ptr, path, r_ptr, r_prop, r_index, nullptr, nullptr, true, true);
 }
 
+bool RNA_path_read_array_static(const PointerRNA *root,
+                                const char *path,
+                                const RawPropertyType type,
+                                void *dest,
+                                const int length)
+{
+  PointerRNA owner;
+  PropertyRNA *property = nullptr;
+  int index = -1;
+  if (path[0] == '\0' || !RNA_path_resolve_static(root, path, &owner, &property, &index) ||
+      !owner.data || !property || index != -1)
+  {
+    return false;
+  }
+  if (RNA_property_is_idprop(property)) {
+    /* Use the stored integer representation without converting float, bool or double arrays. */
+    auto *stored = reinterpret_cast<IDProperty *>(property);
+    if (type != PROP_RAW_INT || stored->type != IDP_ARRAY || stored->subtype != IDP_INT ||
+        stored->len != length)
+    {
+      return false;
+    }
+    if (length != 0) {
+      memmove(dest, IDP_array_int_get(stored), sizeof(int) * size_t(length));
+    }
+    return true;
+  }
+  /* These fixed native getters provide every float array in the captured display plan. */
+  if (type != PROP_RAW_FLOAT ||
+      !ELEM(property,
+            &rna_Object_matrix_world,
+            &rna_Material_diffuse_color,
+            &rna_NodeSocketColor_default_value,
+            &rna_NodeSocketVector_default_value) ||
+      RNA_property_array_length(&owner, property) != length)
+  {
+    return false;
+  }
+  RNA_property_float_get_array(&owner, property, static_cast<float *>(dest));
+  return true;
+}
+
 bool RNA_path_resolve_property(const PointerRNA *ptr,
                                const char *path,
                                PointerRNA *r_ptr,

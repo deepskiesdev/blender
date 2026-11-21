@@ -4089,6 +4089,65 @@ static PyObject *pyrna_struct_path_resolve(BPy_StructRNA *self, PyObject *args)
   return pyrna_struct_path_resolve_impl(self, args, false);
 }
 
+static bool pyrna_static_buffer_layout(const Py_buffer &buffer, RawPropertyType &type, int &length)
+{
+  type = PROP_RAW_UNSET;
+  if (buffer.format && buffer.format[0] && buffer.format[1] == '\0') {
+    switch (buffer.format[0]) {
+      case 'i':
+      case 'I':
+        type = PROP_RAW_INT;
+        break;
+      case 'f':
+        type = PROP_RAW_FLOAT;
+        break;
+      case '?':
+        type = PROP_RAW_BOOLEAN;
+        break;
+      default:
+        break;
+    }
+  }
+
+  const size_t size = type == PROP_RAW_UNSET ? 0 : RNA_raw_type_sizeof(type);
+  const bool compatible = size != 0 && buffer.ndim == 1 && buffer.len >= 0 &&
+                          size_t(buffer.itemsize) == size && size_t(buffer.len) % size == 0 &&
+                          size_t(buffer.len) / size <= INT_MAX &&
+                          (buffer.len == 0 || reinterpret_cast<uintptr_t>(buffer.buf) % size == 0);
+  if (compatible) {
+    length = int(size_t(buffer.len) / size);
+  }
+  return compatible;
+}
+
+static PyObject *pyrna_struct_read_array_static(BPy_StructRNA *self, PyObject *args)
+{
+  PYRNA_STRUCT_CHECK_OBJ(self);
+
+  const char *path;
+  PyObject *target;
+  if (!PyArg_ParseTuple(args, "sO!:_read_array_static", &path, &PyMemoryView_Type, &target)) {
+    return nullptr;
+  }
+  Py_buffer buffer;
+  if (PyObject_GetBuffer(target, &buffer, PyBUF_C_CONTIGUOUS | PyBUF_WRITABLE | PyBUF_FORMAT) < 0)
+  {
+    return nullptr;
+  }
+  RawPropertyType type;
+  int length;
+  /* Acquire the exact destination before resolving a live property, then release it on every exit.
+   */
+  const bool ok = pyrna_static_buffer_layout(buffer, type, length) &&
+                  (buffer.format[0] == 'i' || buffer.format[0] == 'f') &&
+                  RNA_path_read_array_static(&self->ptr.value(), path, type, buffer.buf, length);
+  PyBuffer_Release(&buffer);
+  if (PyErr_Occurred()) {
+    return nullptr;
+  }
+  return PyBool_FromLong(ok);
+}
+
 static PyObject *pyrna_struct_path_resolve_static(BPy_StructRNA *self, PyObject *args)
 {
   return pyrna_struct_path_resolve_impl(self, args, true);
@@ -6235,35 +6294,12 @@ static PyObject *pyrna_prop_collection_foreach_get_static(BPy_PropertyRNA *self,
     return nullptr;
   }
 
-  RawPropertyType type = PROP_RAW_UNSET;
-  if (buffer.format && buffer.format[0] && buffer.format[1] == '\0') {
-    switch (buffer.format[0]) {
-      case 'i':
-      case 'I':
-        type = PROP_RAW_INT;
-        break;
-      case 'f':
-        type = PROP_RAW_FLOAT;
-        break;
-      case '?':
-        type = PROP_RAW_BOOLEAN;
-        break;
-      default:
-        break;
-    }
-  }
-
-  const size_t size = type == PROP_RAW_UNSET ? 0 : RNA_raw_type_sizeof(type);
-  const bool compatible = size != 0 && buffer.ndim == 1 && buffer.len >= 0 &&
-                          size_t(buffer.itemsize) == size && size_t(buffer.len) % size == 0 &&
-                          size_t(buffer.len) / size <= INT_MAX &&
-                          (buffer.len == 0 || reinterpret_cast<uintptr_t>(buffer.buf) % size == 0);
-  const bool ok = compatible && RNA_property_collection_raw_get_static(&self->ptr.value(),
-                                                                       self->prop,
-                                                                       attr,
-                                                                       buffer.buf,
-                                                                       type,
-                                                                       int(buffer.len / size));
+  RawPropertyType type;
+  int length;
+  const bool compatible = pyrna_static_buffer_layout(buffer, type, length);
+  const bool ok = compatible &&
+                  RNA_property_collection_raw_get_static(
+                      &self->ptr.value(), self->prop, attr, buffer.buf, type, length);
   PyBuffer_Release(&buffer);
   if (!ok) {
     PyErr_SetString(PyExc_TypeError, "Static RNA collection does not match its fixed buffer");
@@ -6599,6 +6635,7 @@ static PyMethodDef pyrna_struct_methods[] = {
      reinterpret_cast<PyCFunction>(pyrna_struct_path_resolve),
      METH_VARARGS,
      pyrna_struct_path_resolve_doc},
+    {"_read_array_static", (PyCFunction)pyrna_struct_read_array_static, METH_VARARGS, nullptr},
     {"_path_resolve_static",
      reinterpret_cast<PyCFunction>(pyrna_struct_path_resolve_static),
      METH_VARARGS,
