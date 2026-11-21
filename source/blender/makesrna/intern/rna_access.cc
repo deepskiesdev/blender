@@ -51,6 +51,7 @@
 #include "DEG_depsgraph_build.hh"
 
 #include "RNA_access.hh"
+#include "RNA_access_static.hh"
 #include "RNA_define.hh"
 #include "RNA_enum_types.hh"
 #include "RNA_path.hh"
@@ -5287,8 +5288,12 @@ bool RNA_property_collection_type_get(PointerRNA *ptr, PropertyRNA *prop, Pointe
   return ((r_ptr->type = rna_ensure_property(prop)->srna) ? 1 : 0);
 }
 
-int RNA_property_collection_raw_array(
-    PointerRNA *ptr, PropertyRNA *prop, PropertyRNA *itemprop, bool set, RawArray *array)
+static int rna_property_collection_raw_array(PointerRNA *ptr,
+                                             PropertyRNA *prop,
+                                             PropertyRNA *itemprop,
+                                             bool set,
+                                             RawArray *array,
+                                             const StructRNA *expected_type)
 {
   CollectionPropertyIterator iter;
   ArrayIterator *internal;
@@ -5305,6 +5310,10 @@ int RNA_property_collection_raw_array(
   RNA_property_collection_begin(ptr, prop, &iter);
 
   if (iter.valid) {
+    if (expected_type && iter.ptr.type != expected_type) {
+      RNA_property_collection_end(&iter);
+      return 0;
+    }
     /* get data from array iterator and item property */
     internal = &iter.internal.array;
     arrayp = (iter.valid) ? static_cast<char *>(iter.ptr.data) : nullptr;
@@ -5327,6 +5336,12 @@ int RNA_property_collection_raw_array(
   RNA_property_collection_end(&iter);
 
   return 1;
+}
+
+int RNA_property_collection_raw_array(
+    PointerRNA *ptr, PropertyRNA *prop, PropertyRNA *itemprop, bool set, RawArray *array)
+{
+  return rna_property_collection_raw_array(ptr, prop, itemprop, set, array, nullptr);
 }
 
 #define RAW_GET(dtype, var, raw, a) \
@@ -5467,7 +5482,8 @@ static int rna_raw_access(ReportList *reports,
                           void *inarray,
                           RawPropertyType intype,
                           int inlen,
-                          int set)
+                          int set,
+                          const bool static_properties = false)
 {
   StructRNA *ptype;
   PropertyRNA *itemprop, *iprop;
@@ -5486,11 +5502,31 @@ static int rna_raw_access(ReportList *reports,
   in.len = inlen;
   in.stride = 0;
 
+  if (static_properties &&
+      (!ptr->data || prop->magic != RNA_MAGIC || prop->type != PROP_COLLECTION ||
+       RNA_property_is_runtime(prop) || RNA_property_deprecated(prop) != nullptr ||
+       !RNA_static_owner_is_ready(*ptr) ||
+       !RNA_static_property_is_ready(*ptr, prop)))
+  {
+    return 0;
+  }
   ptype = RNA_property_pointer_type(ptr, prop);
+  if (static_properties && !ptype) {
+    return 0;
+  }
 
   /* try to get item property pointer */
   PointerRNA itemptr_base = RNA_pointer_create_discrete(nullptr, ptype, nullptr);
   itemprop = RNA_struct_find_property(&itemptr_base, propname);
+  if (static_properties &&
+      (!itemprop || itemprop->magic != RNA_MAGIC || RNA_property_is_runtime(itemprop) || RNA_property_deprecated(itemprop) != nullptr ||
+       itemprop->getlength ||
+       !((itemprop->type == PROP_FLOAT && in.type == PROP_RAW_FLOAT) ||
+         (itemprop->type == PROP_INT && in.type == PROP_RAW_INT) ||
+         (itemprop->type == PROP_BOOLEAN && in.type == PROP_RAW_BOOLEAN))))
+  {
+    return 0;
+  }
 
   if (itemprop) {
     /* we have item property pointer */
@@ -5514,7 +5550,15 @@ static int rna_raw_access(ReportList *reports,
       itemprop = nullptr;
     }
     /* try to access as raw array */
-    else if (RNA_property_collection_raw_array(ptr, prop, itemprop, set, &out)) {
+    else if ((!static_properties || !ptype->refine) &&
+             rna_property_collection_raw_array(
+                 ptr, prop, itemprop, set, &out, static_properties ? ptype : nullptr))
+    {
+      if (static_properties &&
+          (out.len < 0 || (out.len != 0 && item_len > std::numeric_limits<int>::max() / out.len)))
+      {
+        return 0;
+      }
       if (in.len != item_len * out.len) {
         BKE_reportf(reports,
                     RPT_ERROR,
@@ -5525,6 +5569,9 @@ static int rna_raw_access(ReportList *reports,
       }
 
       /* matching raw types */
+      if (static_properties && in.len == 0) {
+        return 1;
+      }
       if (out.type == in.type) {
         void *inp = in.array;
         void *outp = out.array;
@@ -5582,6 +5629,12 @@ static int rna_raw_access(ReportList *reports,
      * property of a type derived from the collection pointer type */
     RNA_PROP_BEGIN (ptr, itemptr, prop) {
       if (itemptr.data) {
+        if (static_properties && (RNA_struct_find_property(&itemptr, propname) != itemprop ||
+                                  item_len > in.len - a))
+        {
+          err = 1;
+          break;
+        }
         if (itemprop) {
           /* we got the property already */
           iprop = itemprop;
@@ -5817,7 +5870,7 @@ static int rna_raw_access(ReportList *reports,
       MEM_delete_void(tmparray);
     }
 
-    return !err;
+    return !err && (!static_properties || a == in.len);
   }
 }
 
@@ -5851,6 +5904,16 @@ int RNA_property_collection_raw_get(ReportList *reports,
                                     int len)
 {
   return rna_raw_access(reports, ptr, prop, propname, array, type, len, 0);
+}
+
+int RNA_property_collection_raw_get_static(PointerRNA *ptr,
+                                           PropertyRNA *prop,
+                                           const char *propname,
+                                           void *array,
+                                           RawPropertyType type,
+                                           int len)
+{
+  return rna_raw_access(nullptr, ptr, prop, propname, array, type, len, 0, true);
 }
 
 int RNA_property_collection_raw_set(ReportList *reports,
