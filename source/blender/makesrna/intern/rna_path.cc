@@ -23,9 +23,11 @@
 #include "BKE_idtype.hh"
 #include "BKE_layer.hh"
 #include "BKE_lib_id.hh"
+#include "BKE_mesh_types.hh"
 
 #include "DNA_ID.h" /* For ID properties. */
 #include "DNA_layer_types.h"
+#include "DNA_mesh_types.h"
 
 #include "MEM_guardedalloc.h"
 
@@ -384,6 +386,18 @@ static bool rna_path_static_layer_ready(const PointerRNA &ptr)
   return layer && !(layer->flag & VIEW_LAYER_OUT_OF_SYNC);
 }
 
+static bool rna_path_static_property_ready(const PointerRNA &ptr, const PropertyRNA *prop)
+{
+  if (prop == &rna_Mesh_corner_normals) {
+    /* The collection iterator uses Mesh::corner_normals() and can build
+     * multiple native caches if its final corner normals are not prepared. */
+    const Mesh *mesh = static_cast<const Mesh *>(ptr.data);
+    /* Empty meshes return an empty span before consulting the cache. */
+    return mesh->faces_num == 0 || (mesh->runtime && mesh->runtime->corner_normals_cache.is_cached());
+  }
+  return true;
+}
+
 /**
  * Generic rna path parser.
  *
@@ -480,7 +494,8 @@ static bool rna_path_parse(const PointerRNA *ptr,
     }
 
     if (static_properties && !use_id_prop &&
-        (RNA_property_is_runtime(prop) || RNA_property_deprecated(prop) != nullptr))
+        (RNA_property_is_runtime(prop) || RNA_property_deprecated(prop) != nullptr ||
+         !rna_path_static_property_ready(curptr, prop)))
     {
       return false;
     }
