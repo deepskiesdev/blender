@@ -426,7 +426,8 @@ static bool rna_path_parse(const PointerRNA *ptr,
                            PointerRNA *r_item_ptr,
                            ListBase *r_elements,
                            const bool eval_pointer,
-                           const bool static_properties = false)
+                           const bool static_properties = false,
+                           const bool whole_array = false)
 {
   BLI_assert(r_item_ptr == nullptr || !eval_pointer);
   PropertyRNA *prop;
@@ -546,6 +547,11 @@ static bool rna_path_parse(const PointerRNA *ptr,
         break;
       }
       default:
+        /* A whole-array read checks its own admitted property and length.
+         * Never ask an unselected property's dimension getter to parse a subscript. */
+        if (whole_array && *path) {
+          return false;
+        }
         if (r_index || prop_elem) {
           if (!rna_path_parse_array_index(&path, &curptr, prop, &index, static_properties)) {
             return false;
@@ -627,9 +633,18 @@ bool RNA_path_read_array_static(const PointerRNA *root,
 {
   PointerRNA owner;
   PropertyRNA *property = nullptr;
-  int index = -1;
-  if (path[0] == '\0' || !RNA_path_resolve_static(root, path, &owner, &property, &index) ||
-      !owner.data || !property || index != -1)
+  if (!path || !*path || length < 0 || (length != 0 && !dest) ||
+      !rna_path_parse(root,
+                      path,
+                      &owner,
+                      &property,
+                      nullptr,
+                      nullptr,
+                      nullptr,
+                      /*eval_pointer=*/false,
+                      /*static_properties=*/true,
+                      /*whole_array=*/true) ||
+      !owner.data || !property)
   {
     return false;
   }
