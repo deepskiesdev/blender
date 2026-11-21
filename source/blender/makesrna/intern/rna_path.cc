@@ -490,8 +490,7 @@ static bool rna_path_parse(const PointerRNA *ptr,
     }
 
     if (static_properties && !use_id_prop &&
-        (RNA_property_is_runtime(prop) ||
-         !RNA_static_property_is_ready(curptr, prop)))
+        (RNA_property_is_runtime(prop) || !RNA_static_property_is_ready(curptr, prop)))
     {
       return false;
     }

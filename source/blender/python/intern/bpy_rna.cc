@@ -14,8 +14,8 @@
 
 #include <Python.h>
 
-#include <climits>
 #include <cfloat> /* FLT_MIN/MAX */
+#include <climits>
 #include <cstddef>
 #include <optional>
 
@@ -5997,7 +5997,8 @@ static PyObject *pyrna_prop_collection_foreach_get_static(BPy_PropertyRNA *self,
     return nullptr;
   }
   Py_buffer buffer;
-  if (PyObject_GetBuffer(target, &buffer, PyBUF_C_CONTIGUOUS | PyBUF_WRITABLE | PyBUF_FORMAT) < 0) {
+  if (PyObject_GetBuffer(target, &buffer, PyBUF_C_CONTIGUOUS | PyBUF_WRITABLE | PyBUF_FORMAT) < 0)
+  {
     return nullptr;
   }
 
@@ -6023,13 +6024,13 @@ static PyObject *pyrna_prop_collection_foreach_get_static(BPy_PropertyRNA *self,
   const bool compatible = size != 0 && buffer.ndim == 1 && buffer.len >= 0 &&
                           size_t(buffer.itemsize) == size && size_t(buffer.len) % size == 0 &&
                           size_t(buffer.len) / size <= INT_MAX &&
-                          reinterpret_cast<uintptr_t>(buffer.buf) % size == 0;
+                          (buffer.len == 0 || reinterpret_cast<uintptr_t>(buffer.buf) % size == 0);
   const bool ok = compatible && RNA_property_collection_raw_get_static(&self->ptr.value(),
-                                                                        self->prop,
-                                                                        attr,
-                                                                        buffer.buf,
-                                                                        type,
-                                                                        int(buffer.len / size));
+                                                                       self->prop,
+                                                                       attr,
+                                                                       buffer.buf,
+                                                                       type,
+                                                                       int(buffer.len / size));
   PyBuffer_Release(&buffer);
   if (!ok) {
     PyErr_SetString(PyExc_TypeError, "Static RNA collection does not match its fixed buffer");

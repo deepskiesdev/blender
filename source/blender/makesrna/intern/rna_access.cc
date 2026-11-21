@@ -4985,12 +4985,11 @@ static int rna_raw_access(ReportList *reports,
   /* try to get item property pointer */
   PointerRNA itemptr_base = RNA_pointer_create_discrete(nullptr, ptype, nullptr);
   itemprop = RNA_struct_find_property(&itemptr_base, propname);
-  if (static_properties &&
-      (!itemprop || itemprop->magic != RNA_MAGIC || RNA_property_is_runtime(itemprop) ||
-       itemprop->getlength ||
-       !((itemprop->type == PROP_FLOAT && in.type == PROP_RAW_FLOAT) ||
-         (itemprop->type == PROP_INT && in.type == PROP_RAW_INT) ||
-         (itemprop->type == PROP_BOOLEAN && in.type == PROP_RAW_BOOLEAN))))
+  if (static_properties && (!itemprop || itemprop->magic != RNA_MAGIC ||
+                            RNA_property_is_runtime(itemprop) || itemprop->getlength ||
+                            !((itemprop->type == PROP_FLOAT && in.type == PROP_RAW_FLOAT) ||
+                              (itemprop->type == PROP_INT && in.type == PROP_RAW_INT) ||
+                              (itemprop->type == PROP_BOOLEAN && in.type == PROP_RAW_BOOLEAN))))
   {
     return 0;
   }
@@ -5020,9 +5019,7 @@ static int rna_raw_access(ReportList *reports,
                  ptr, prop, itemprop, set, &out, static_properties ? ptype : nullptr))
     {
       int arraylen = (itemlen == 0) ? 1 : itemlen;
-      if (static_properties &&
-          (out.len < 0 || (out.len != 0 && arraylen > INT_MAX / out.len)))
-      {
+      if (static_properties && (out.len < 0 || (out.len != 0 && arraylen > INT_MAX / out.len))) {
         return 0;
       }
       if (in.len != arraylen * out.len) {
