@@ -5505,8 +5505,7 @@ static int rna_raw_access(ReportList *reports,
   if (static_properties &&
       (!ptr->data || prop->magic != RNA_MAGIC || prop->type != PROP_COLLECTION ||
        RNA_property_is_runtime(prop) || RNA_property_deprecated(prop) != nullptr ||
-       !RNA_static_owner_is_ready(*ptr) ||
-       !RNA_static_property_is_ready(*ptr, prop)))
+       !RNA_static_owner_is_ready(*ptr) || !RNA_static_property_is_ready(*ptr, prop)))
   {
     return 0;
   }
@@ -5519,8 +5518,8 @@ static int rna_raw_access(ReportList *reports,
   PointerRNA itemptr_base = RNA_pointer_create_discrete(nullptr, ptype, nullptr);
   itemprop = RNA_struct_find_property(&itemptr_base, propname);
   if (static_properties &&
-      (!itemprop || itemprop->magic != RNA_MAGIC || RNA_property_is_runtime(itemprop) || RNA_property_deprecated(itemprop) != nullptr ||
-       itemprop->getlength ||
+      (!itemprop || itemprop->magic != RNA_MAGIC || RNA_property_is_runtime(itemprop) ||
+       RNA_property_deprecated(itemprop) != nullptr || itemprop->getlength ||
        !((itemprop->type == PROP_FLOAT && in.type == PROP_RAW_FLOAT) ||
          (itemprop->type == PROP_INT && in.type == PROP_RAW_INT) ||
          (itemprop->type == PROP_BOOLEAN && in.type == PROP_RAW_BOOLEAN))))
@@ -5629,8 +5628,8 @@ static int rna_raw_access(ReportList *reports,
      * property of a type derived from the collection pointer type */
     RNA_PROP_BEGIN (ptr, itemptr, prop) {
       if (itemptr.data) {
-        if (static_properties && (RNA_struct_find_property(&itemptr, propname) != itemprop ||
-                                  item_len > in.len - a))
+        if (static_properties &&
+            (RNA_struct_find_property(&itemptr, propname) != itemprop || item_len > in.len - a))
         {
           err = 1;
           break;
