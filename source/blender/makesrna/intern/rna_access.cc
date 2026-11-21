@@ -5502,10 +5502,12 @@ static int rna_raw_access(ReportList *reports,
   in.len = inlen;
   in.stride = 0;
 
+  /* A bracketed name would dispatch to the ordinary ID-property path parser. */
   if (static_properties &&
-      (!ptr->data || prop->magic != RNA_MAGIC || prop->type != PROP_COLLECTION ||
-       RNA_property_is_runtime(prop) || RNA_property_deprecated(prop) != nullptr ||
-       !RNA_static_owner_is_ready(*ptr) || !RNA_static_property_is_ready(*ptr, prop)))
+      (propname[0] == '[' || !ptr->data || prop->magic != RNA_MAGIC ||
+       prop->type != PROP_COLLECTION || RNA_property_is_runtime(prop) ||
+       RNA_property_deprecated(prop) != nullptr || !RNA_static_owner_is_ready(*ptr) ||
+       !RNA_static_property_is_ready(*ptr, prop)))
   {
     return 0;
   }
@@ -5559,11 +5561,13 @@ static int rna_raw_access(ReportList *reports,
         return 0;
       }
       if (in.len != item_len * out.len) {
-        BKE_reportf(reports,
-                    RPT_ERROR,
-                    "Array length mismatch (expected %d, got %d)",
-                    out.len * item_len,
-                    in.len);
+        if (!static_properties) {
+          BKE_reportf(reports,
+                      RPT_ERROR,
+                      "Array length mismatch (expected %d, got %d)",
+                      out.len * item_len,
+                      in.len);
+        }
         return 0;
       }
 
