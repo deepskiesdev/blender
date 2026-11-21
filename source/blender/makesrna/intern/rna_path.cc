@@ -66,9 +66,10 @@ bool operator==(const RNAPath &left, const RNAPath &right)
  * \param path: Extract the token from path, step the pointer to the beginning of the next token
  * \return The nil terminated token.
  */
-static char *rna_path_token(const char **path, char *fixedbuf, int fixedlen)
+static char *rna_path_token(
+    const char **path, char *fixedbuf, size_t fixedlen, const bool fixed_only = false)
 {
-  int len = 0;
+  size_t len = 0;
 
   /* Get data until `.` or `[`. */
   const char *p = *path;
@@ -77,14 +78,14 @@ static char *rna_path_token(const char **path, char *fixedbuf, int fixedlen)
     p++;
   }
 
-  /* Empty, return. */
-  if (UNLIKELY(len == 0)) {
+  /* Refuse a missing token or one outside the static parser's fixed buffer. */
+  if (UNLIKELY(len == 0 || (fixed_only && len >= fixedlen - 1))) {
     return nullptr;
   }
 
   /* Try to use fixed buffer if possible. */
   char *buf = (len + 1 < fixedlen) ? fixedbuf :
-                                     MEM_new_array_uninitialized<char>(size_t(len) + 1, __func__);
+                                     MEM_new_array_uninitialized<char>(len + 1, __func__);
   memcpy(buf, *path, sizeof(char) * len);
   buf[len] = '\0';
 
@@ -108,10 +109,11 @@ static char *rna_path_token(const char **path, char *fixedbuf, int fixedlen)
  */
 static char *rna_path_token_in_brackets(const char **path,
                                         char *fixedbuf,
-                                        int fixedlen,
-                                        bool *r_quoted)
+                                        size_t fixedlen,
+                                        bool *r_quoted,
+                                        const bool fixed_only = false)
 {
-  int len = 0;
+  size_t len = 0;
   bool quoted = false;
 
   BLI_assert(r_quoted != nullptr);
@@ -135,7 +137,7 @@ static char *rna_path_token_in_brackets(const char **path,
       return nullptr;
     }
     /* Exclude the last quote from the length. */
-    len += (p_end - p);
+    len = size_t(p_end - p);
 
     /* Skip the last quoted char to get the `]`. */
     p_end += 1;
@@ -162,9 +164,13 @@ static char *rna_path_token_in_brackets(const char **path,
     }
   }
 
+  if (fixed_only && len >= fixedlen - 1) {
+    return nullptr;
+  }
+
   /* Try to use fixed buffer if possible. */
   char *buf = (len + 1 < fixedlen) ? fixedbuf :
-                                     MEM_new_array_uninitialized<char>(size_t(len) + 1, __func__);
+                                     MEM_new_array_uninitialized<char>(len + 1, __func__);
 
   /* Copy string, taking into account escaped ']' */
   if (quoted) {
@@ -198,7 +204,8 @@ static char *rna_path_token_in_brackets(const char **path,
 static bool rna_path_parse_collection_key(const char **path,
                                           PointerRNA *ptr,
                                           PropertyRNA *prop,
-                                          PointerRNA *r_nextptr)
+                                          PointerRNA *r_nextptr,
+                                          const bool fixed_only)
 {
   char fixedbuf[256];
   int intkey;
@@ -216,7 +223,7 @@ static bool rna_path_parse_collection_key(const char **path,
     char *token;
 
     /* resolve the lookup with [] brackets */
-    token = rna_path_token_in_brackets(path, fixedbuf, sizeof(fixedbuf), &quoted);
+    token = rna_path_token_in_brackets(path, fixedbuf, sizeof(fixedbuf), &quoted, fixed_only);
 
     if (!token) {
       return false;
@@ -265,7 +272,8 @@ static bool rna_path_parse_collection_key(const char **path,
 static bool rna_path_parse_array_index(const char **path,
                                        PointerRNA *ptr,
                                        PropertyRNA *prop,
-                                       int *r_index)
+                                       int *r_index,
+                                       const bool fixed_only)
 {
   char fixedbuf[256];
   int index_arr[RNA_MAX_ARRAY_DIMENSION] = {0};
@@ -287,7 +295,7 @@ static bool rna_path_parse_array_index(const char **path,
     /* multi index resolve */
     if (**path == '[') {
       bool quoted;
-      token = rna_path_token_in_brackets(path, fixedbuf, sizeof(fixedbuf), &quoted);
+      token = rna_path_token_in_brackets(path, fixedbuf, sizeof(fixedbuf), &quoted, fixed_only);
 
       if (token == nullptr) {
         /* invalid syntax blah[] */
@@ -312,7 +320,7 @@ static bool rna_path_parse_array_index(const char **path,
     }
     else if (dim == 1) {
       /* location.x || scale.X, single dimension arrays only */
-      token = rna_path_token(path, fixedbuf, sizeof(fixedbuf));
+      token = rna_path_token(path, fixedbuf, sizeof(fixedbuf), fixed_only);
       if (token == nullptr) {
         /* invalid syntax blah. */
         return false;
@@ -396,7 +404,7 @@ static bool rna_path_static_layer_ready(const PointerRNA &ptr)
  *                      and \a r_prop will be null.
  *                      Mutually exclusive with \a r_item_ptr.
  * \param static_properties: Refuse runtime properties and unprepared layer data
- *                           before reading or traversing them.
+ *                           before reading or traversing them. Use fixed token storage.
  *
  * \return \a true on success, \a false if the path is somehow invalid.
  */
@@ -445,9 +453,9 @@ static bool rna_path_parse(const PointerRNA *ptr,
 
     /* look up property name in current struct */
     bool quoted = false;
-    char *token = use_id_prop ?
-                      rna_path_token_in_brackets(&path, fixedbuf, sizeof(fixedbuf), &quoted) :
-                      rna_path_token(&path, fixedbuf, sizeof(fixedbuf));
+    char *token = use_id_prop ? rna_path_token_in_brackets(
+                                    &path, fixedbuf, sizeof(fixedbuf), &quoted, static_properties) :
+                                rna_path_token(&path, fixedbuf, sizeof(fixedbuf), static_properties);
     if (!token) {
       return false;
     }
@@ -515,7 +523,7 @@ static bool rna_path_parse(const PointerRNA *ptr,
          * so do_item_ptr is of no use in that case.
          */
         if (*path) {
-          if (!rna_path_parse_collection_key(&path, &curptr, prop, &nextptr)) {
+          if (!rna_path_parse_collection_key(&path, &curptr, prop, &nextptr, static_properties)) {
             return false;
           }
 
@@ -529,7 +537,7 @@ static bool rna_path_parse(const PointerRNA *ptr,
       }
       default:
         if (r_index || prop_elem) {
-          if (!rna_path_parse_array_index(&path, &curptr, prop, &index)) {
+          if (!rna_path_parse_array_index(&path, &curptr, prop, &index, static_properties)) {
             return false;
           }
 
