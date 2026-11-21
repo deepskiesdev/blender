@@ -14,6 +14,7 @@
 
 #include <Python.h>
 
+#include <climits>
 #include <cfloat> /* FLT_MIN/MAX */
 #include <cstddef>
 #include <optional>
@@ -45,6 +46,7 @@
 #endif
 
 #include "RNA_access.hh"
+#include "RNA_access_static.hh"
 #include "RNA_define.hh" /* RNA_def_property_free_identifier */
 #include "RNA_enum_types.hh"
 #include "RNA_prototypes.hh"
@@ -5985,6 +5987,57 @@ static PyObject *pyrna_prop_collection_foreach_get(BPy_PropertyRNA *self, PyObje
   return foreach_getset(self, args, 0);
 }
 
+static PyObject *pyrna_prop_collection_foreach_get_static(BPy_PropertyRNA *self, PyObject *args)
+{
+  PYRNA_PROP_CHECK_OBJ(self);
+
+  const char *attr;
+  PyObject *target;
+  if (!PyArg_ParseTuple(args, "sO!:_foreach_get_static", &attr, &PyMemoryView_Type, &target)) {
+    return nullptr;
+  }
+  Py_buffer buffer;
+  if (PyObject_GetBuffer(target, &buffer, PyBUF_C_CONTIGUOUS | PyBUF_WRITABLE | PyBUF_FORMAT) < 0) {
+    return nullptr;
+  }
+
+  RawPropertyType type = PROP_RAW_UNSET;
+  if (buffer.format && buffer.format[0] && buffer.format[1] == '\0') {
+    switch (buffer.format[0]) {
+      case 'i':
+      case 'I':
+        type = PROP_RAW_INT;
+        break;
+      case 'f':
+        type = PROP_RAW_FLOAT;
+        break;
+      case '?':
+        type = PROP_RAW_BOOLEAN;
+        break;
+      default:
+        break;
+    }
+  }
+
+  const size_t size = type == PROP_RAW_UNSET ? 0 : RNA_raw_type_sizeof(type);
+  const bool compatible = size != 0 && buffer.ndim == 1 && buffer.len >= 0 &&
+                          size_t(buffer.itemsize) == size && size_t(buffer.len) % size == 0 &&
+                          size_t(buffer.len) / size <= INT_MAX &&
+                          reinterpret_cast<uintptr_t>(buffer.buf) % size == 0;
+  const bool ok = compatible && RNA_property_collection_raw_get_static(&self->ptr.value(),
+                                                                        self->prop,
+                                                                        attr,
+                                                                        buffer.buf,
+                                                                        type,
+                                                                        int(buffer.len / size));
+  PyBuffer_Release(&buffer);
+  if (!ok) {
+    PyErr_SetString(PyExc_TypeError, "Static RNA collection does not match its fixed buffer");
+    return nullptr;
+  }
+  Py_RETURN_NONE;
+}
+
 PyDoc_STRVAR(
     /* Wrap. */
     pyrna_prop_collection_foreach_set_doc,
@@ -6380,6 +6433,10 @@ static PyMethodDef pyrna_prop_array_methods[] = {
 };
 
 static PyMethodDef pyrna_prop_collection_methods[] = {
+    {"_foreach_get_static",
+     (PyCFunction)pyrna_prop_collection_foreach_get_static,
+     METH_VARARGS,
+     nullptr},
     {"foreach_get",
      (PyCFunction)pyrna_prop_collection_foreach_get,
      METH_VARARGS,

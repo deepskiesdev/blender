@@ -32,6 +32,7 @@
 #include "MEM_guardedalloc.h"
 
 #include "RNA_access.hh"
+#include "RNA_access_static.hh"
 #include "RNA_define.hh"
 #include "RNA_path.hh"
 #include "RNA_prototypes.hh"
@@ -363,7 +364,7 @@ static bool rna_path_parse_array_index(const char **path,
   return true;
 }
 
-static bool rna_path_static_layer_ready(const PointerRNA &ptr)
+bool RNA_static_owner_is_ready(const PointerRNA &ptr)
 {
   const ViewLayer *layer;
   if (ELEM(ptr.type, &RNA_ViewLayer, &RNA_LayerObjects)) {
@@ -382,7 +383,7 @@ static bool rna_path_static_layer_ready(const PointerRNA &ptr)
   return layer && !(layer->flag & VIEW_LAYER_OUT_OF_SYNC);
 }
 
-static bool rna_path_static_property_ready(const PointerRNA &ptr, const PropertyRNA *prop)
+bool RNA_static_property_is_ready(const PointerRNA &ptr, const PropertyRNA *prop)
 {
   if (prop == &rna_Mesh_corner_normals) {
     /* The collection iterator uses Mesh::corner_normals() and can build
@@ -456,7 +457,7 @@ static bool rna_path_parse(const PointerRNA *ptr,
     /* Custom property lookup: e.g. `C.object["someprop"]`. */
 
     /* Layer collection traversal can synchronize and replace native data. */
-    if (!curptr.data || (static_properties && !rna_path_static_layer_ready(curptr))) {
+    if (!curptr.data || (static_properties && !RNA_static_owner_is_ready(curptr))) {
       return false;
     }
 
@@ -490,7 +491,7 @@ static bool rna_path_parse(const PointerRNA *ptr,
 
     if (static_properties && !use_id_prop &&
         (RNA_property_is_runtime(prop) ||
-         !rna_path_static_property_ready(curptr, prop)))
+         !RNA_static_property_is_ready(curptr, prop)))
     {
       return false;
     }
