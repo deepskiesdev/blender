@@ -6,6 +6,7 @@
  * \ingroup RNA
  */
 
+#include <charconv>
 #include <cstdlib>
 #include <cstring>
 
@@ -19,6 +20,8 @@
 #include "BLI_string_ref.hh"
 #include "BLI_utildefines.h"
 
+#include "BKE_attribute.hh"
+#include "BKE_attribute_storage.hh"
 #include "BKE_idprop.hh"
 #include "BKE_idtype.hh"
 #include "BKE_layer.hh"
@@ -272,6 +275,32 @@ static bool rna_path_parse_collection_key(const char **path,
   return found;
 }
 
+static bool rna_path_parse_cold_normal_key(const char **path,
+                                          const PointerRNA &ptr,
+                                          const Span<float3> normals,
+                                          PointerRNA &r_nextptr)
+{
+  if (**path != '[') {
+    return false;
+  }
+  char fixedbuf[256];
+  bool quoted;
+  const char *token = rna_path_token_in_brackets(path, fixedbuf, sizeof(fixedbuf), &quoted, true);
+  if (!token || quoted) {
+    return false;
+  }
+  const char *end = token + strlen(token);
+  int index;
+  const auto parsed = std::from_chars(token, end, index);
+  if (parsed.ec != std::errc{} || parsed.ptr != end || index < 0 || index >= normals.size()) {
+    return false;
+  }
+  /* Match the ordinary read-only MeshNormalValue lookup. */
+  rna_pointer_create_with_ancestors(
+      ptr, RNA_MeshNormalValue, const_cast<float3 *>(&normals[index]), r_nextptr);
+  return true;
+}
+
 static bool rna_path_parse_array_index(const char **path,
                                        PointerRNA *ptr,
                                        PropertyRNA *prop,
@@ -399,6 +428,38 @@ bool RNA_static_property_is_ready(const PointerRNA &ptr, const PropertyRNA *prop
   return true;
 }
 
+Span<float3> RNA_static_cold_corner_normals(const PointerRNA &ptr, const PropertyRNA *prop)
+{
+  using namespace blender::bke;
+  if (prop != &rna_Mesh_corner_normals || ptr.type != RNA_Mesh || !ptr.data) {
+    return {};
+  }
+  const Mesh &mesh = *static_cast<const Mesh *>(ptr.data);
+  if (!mesh.runtime || mesh.faces_num <= 0 || mesh.corners_num <= 0 ||
+      mesh.runtime->corner_normals_cache.is_cached())
+  {
+    return {};
+  }
+
+  /* Use the same metadata as Mesh::normals_domain(), including vertex group name precedence.
+   * Mesh::corner_normals() shares this exact span for a Float3 corner attribute. Single-value
+   * storage and all calculated normals still require a prepared cache. */
+  constexpr StringRef name = "custom_normal";
+  const std::optional<AttributeMetaData> meta = mesh.attributes().lookup_meta_data(name);
+  if (!meta || meta->domain != AttrDomain::Corner || meta->data_type != AttrType::Float3) {
+    return {};
+  }
+  const bke::Attribute *attribute = mesh.attribute_storage.wrap().lookup(name);
+  if (!attribute) {
+    return {};
+  }
+  const auto *data = std::get_if<bke::Attribute::ArrayData>(&attribute->data());
+  if (!data || !data->data || data->size != mesh.corners_num) {
+    return {};
+  }
+  return {static_cast<const float3 *>(data->data), data->size};
+}
+
 /**
  * Generic rna path parser.
  *
@@ -495,11 +556,17 @@ static bool rna_path_parse(const PointerRNA *ptr,
       return false;
     }
 
-    if (static_properties && !use_id_prop &&
-        (RNA_property_is_runtime(prop) || RNA_property_deprecated(prop) != nullptr ||
-         !RNA_static_property_is_ready(curptr, prop)))
-    {
-      return false;
+    Span<float3> cold_normals;
+    if (static_properties && !use_id_prop) {
+      if (RNA_property_is_runtime(prop) || RNA_property_deprecated(prop) != nullptr) {
+        return false;
+      }
+      if (!RNA_static_property_is_ready(curptr, prop)) {
+        cold_normals = RNA_static_cold_corner_normals(curptr, prop);
+        if (cold_normals.is_empty()) {
+          return false;
+        }
+      }
     }
 
     if (r_elements) {
@@ -540,7 +607,11 @@ static bool rna_path_parse(const PointerRNA *ptr,
          * so do_item_ptr is of no use in that case.
          */
         if (*path) {
-          if (!rna_path_parse_collection_key(&path, &curptr, prop, &nextptr, static_properties)) {
+          const bool found = cold_normals.is_empty() ?
+                                 rna_path_parse_collection_key(
+                                     &path, &curptr, prop, &nextptr, static_properties) :
+                                 rna_path_parse_cold_normal_key(&path, curptr, cold_normals, nextptr);
+          if (!found) {
             return false;
           }
 

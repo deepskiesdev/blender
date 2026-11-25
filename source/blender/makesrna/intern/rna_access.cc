@@ -5506,8 +5506,7 @@ static int rna_raw_access(ReportList *reports,
   if (static_properties &&
       (propname[0] == '[' || !ptr->data || prop->magic != RNA_MAGIC ||
        prop->type != PROP_COLLECTION || RNA_property_is_runtime(prop) ||
-       RNA_property_deprecated(prop) != nullptr || !RNA_static_owner_is_ready(*ptr) ||
-       !RNA_static_property_is_ready(*ptr, prop)))
+       RNA_property_deprecated(prop) != nullptr || !RNA_static_owner_is_ready(*ptr)))
   {
     return 0;
   }
@@ -5527,6 +5526,18 @@ static int rna_raw_access(ReportList *reports,
          (itemprop->type == PROP_BOOLEAN && in.type == PROP_RAW_BOOLEAN))))
   {
     return 0;
+  }
+
+  if (static_properties && !RNA_static_property_is_ready(*ptr, prop)) {
+    const Span<float3> normals = RNA_static_cold_corner_normals(*ptr, prop);
+    if (normals.is_empty() || set || itemprop != &rna_MeshNormalValue_vector || !in.array ||
+        in.len != normals.size() * 3)
+    {
+      return 0;
+    }
+    static_assert(sizeof(float3) == 3 * sizeof(float));
+    memmove(in.array, normals.data(), size_t(in.len) * sizeof(float));
+    return 1;
   }
 
   if (itemprop) {

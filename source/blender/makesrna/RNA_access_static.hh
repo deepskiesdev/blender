@@ -2,12 +2,18 @@
 
 #pragma once
 
+#include "BLI_math_vector_types.hh"
+#include "BLI_span.hh"
+
 #include "RNA_types.hh"
 
 namespace blender {
 
 bool RNA_static_owner_is_ready(const PointerRNA &ptr);
 bool RNA_static_property_is_ready(const PointerRNA &ptr, const PropertyRNA *prop);
+
+/* Borrow the exact effective normals when their cache is cold and no evaluation is needed. */
+Span<float3> RNA_static_cold_corner_normals(const PointerRNA &ptr, const PropertyRNA *prop);
 
 /* Resolve and copy a complete, admitted native array without a Python sequence conversion. */
 bool RNA_path_read_array_static(
